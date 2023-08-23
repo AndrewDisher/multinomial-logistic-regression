@@ -19,4 +19,14 @@ There are two options:
 
 ## A Note on renv
 
-renv is an R package that provides a way to track packages, their package dependencies
+[renv](https://rstudio.github.io/renv/articles/renv.html) is an R package that provides a way to track packages, their package dependencies, and the versions for these packages. 
+It makes creating a reproducible R coding environment extremely easy and ensures that the packages used will always stay the same, even when future releases are announced. 
+
+After downloading this repository and opening the R project, you must run this line of code in your R r console:
+
+```
+renv::restore(clean = TRUE)
+```
+
+This will use the `renv.lock` file to restore the project environment. After that, you should be able to knit the R Markdown document
+as usual. 

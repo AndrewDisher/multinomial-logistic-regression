@@ -2,7 +2,11 @@
 title: "Fitting a Multinomial Logistic Regression Model to Fetal Health Data"
 author: "Andrew Disher"
 date: "2023-08-19"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
 ---
 
 ```{r setup, include=FALSE}
@@ -11,39 +15,20 @@ knitr::opts_chunk$set(echo = TRUE, fig.align = "center")
 
 #### This document records my exploration of the fetal health data set, available here: [Fetal Health data from Kaggle](https://www.kaggle.com/datasets/andrewmvd/fetal-health-classification). Our modeling goal is to fit a logistic regression model to accurately predict the health of a fetus in the time leading up to child birth. 
 
-### Goals of this Project:
+### Goals of this Project
 
 1. Practice fitting the multinomial logistic regression model
 2. Practice balancing data sets via over/under-sampling class stratified observations
 3. Use visualizations and computed metrics to assess model fit
 4. Practice using the box package for explicit package and function dependencies (instead of using library() calls)
 
-### [Organization of this Document:]{#0}
+### Traversing this Document
 
-1. [Import necessary package functions using `box`](#1)
-2. [Check the variable structure of the data set](#2)
-3. [Create training and testing data sets](#3)
-4. [Visualizing the data](#4) 
-5. [Notes on `"Outliers"`](#5) 
-6. [Examining potential collinearity in predictors](#6)
-7. [Exploring the response variable: fetal_health](#7)
-8. [Principal Component Analysis](#8)
-9. [Fitting a Multinomial Logistic Regression Model](#9)
-10. [Generating Predictions](#10)
-11. [Model Evaluation: Confusion Matrix](#11)
-12. [Model Evaluation: Confusion Matrix](#12)
-13. [Confusion Matrix Discussion](#13)
-14. [Final Discussion](#14)
+To quickly travel to a specific numbered section of this document, you can click
+on one of the section links provided on the left-hand side of the page. 
 
-#### Traversing this Document:
-
-To quickly travel to a specific numbered section of this document, you can click one of the links 
-above that corresponds to the section you are interested in. To travel back to the 
-table of contents above, click on the section link you are currently visiting. 
-
-I have implemented this functionality because this is a lengthy document, and 
-I wanted to make it as pleasant as possible for the reader (you) to explore my
-work. 
+This is a lengthy document, and I wanted to make it as pleasant as possible for the 
+reader (you) to explore my work. 
 
 Enjoy!
 
@@ -61,7 +46,7 @@ This will install the required R dependencies, recorded in the file renv.lock, t
 
 After that, you're good to go! 
 
-### 1) [[Import necessary package functions using `box`]{#1}](#0)
+### 1) Import necessary package functions using `box`
 ```{r}
 box::use(
   caret[confusionMatrix], 
@@ -78,7 +63,7 @@ box::use(
   )
 ```
 
-### 2) [[Check the variable structure of the data set]{#2}](#0)
+### 2) [Check the variable structure of the data set]{#2}
 
 First, I would like to know what variables I am dealing with and what are their types. The `glimpse()` function from dplyr is useful for this. 
 ```{r}
@@ -95,7 +80,7 @@ We'll sort the variables alphabetically.
 Fetal_Health_Data_Set <- Fetal_Health_Data_Set[, sort(colnames(Fetal_Health_Data_Set))]
 ```
 
-### 3) [[Create training and testing data sets]{#3}](#0)
+### 3) [Create training and testing data sets]{#3}
 
 Before diving into examining data, and then eventually modeling it, let's create
 two data splits for training and testing data. We'll use an 80-20 split; 80% 
@@ -154,7 +139,7 @@ from the tool used monitor fetal health (the Cardiotocogram, or CTG). Also, any 
 that measure things like `number of peaks`, `number of zeros`, and `histogram variance`
 will inherently have values greater or equal to zero. They will never be negative. 
 
-### 4) [[Visualizing the data]{#4}](#0)
+### 4) [Visualizing the data]{#4}
 
 Let's create some boxplots plots to better understand these predictor variables. I'll also 
 rename these variables so the original variable names don't clutter the plot, since they are super long!
@@ -218,7 +203,7 @@ Nice! We can see each of the variables on the same scale now. Like before, we se
 however now we can see the general number of outliers for variables with much smaller scales,
 like `accelerations` and `fetal_movement`.
 
-### 5) [[Notes on `"Outliers"`]{#5}](#0) 
+### 5) [Notes on Outliers]{#5}
 
 It's easy to create some boxplots and determine that we have many outliers when 
 many data points lay outside the bounds set by our classic 1.5*Interquartile Range (IQR)
@@ -243,7 +228,7 @@ They don't have to be for our model!
 All we care about is the multinomial distribution of the response variable, 
 fetal_health. We'll talk about that more soon.
 
-### 6) [[Examining potential collinearity in predictors]{#6}](#0)
+### 6) [Examining potential collinearity in predictors]{#6}
 
 Another common practice is to check if any of our predictors are correlated with each other. 
 If they are, the estimates for our predictor coefficients might be inaccurate. To check this,
@@ -294,7 +279,7 @@ not produce accurate coefficient estimates anyways.
 It may be worth implementing PCA, but first we'll have to address our imbalanced classes.
 Let's do that now!
 
-### 7) [[Exploring the response variable: fetal_health]{#7}](#0)
+### 7) [Exploring the response variable: fetal_health]{#7}
 
 fetal_health is a categorical variable with three levels:
 
@@ -389,7 +374,7 @@ And there we go. Each class is represented by about a third of the observations 
 data set. Our imbalanced class issue has been rectified. Let's move on to our PCA. 
 
 
-### 8) [[Principal Component Analysis]{#8}](#0)
+### 8) [Principal Component Analysis]{#8}
 
 Let's now use the `stats` function `prcomp()` to produce principal components for
 the predictor variables in our data set. 
@@ -477,7 +462,7 @@ PCA_training_data %>%
   head()
 ```
 
-### 9) [[Fitting a Multinomial Logistic Regression Model]{#9}](#0)
+### 9) [Fitting a Multinomial Logistic Regression Model]{#9}
 
 First, let's create a model using only a constant intercept as a predictor. This will serve as our null/base model.
 We'll use the `multinom()` function from the package `nnet`. 
@@ -512,7 +497,7 @@ principal components together are significant within the model. Unfortunately, w
 this much further, since PCA was used and the relationships between the original variables
 and the response variable, `fetal_health`, are now obscured. 
 
-### 10) [[Generating Predictions]{#10}](#0)
+### 10) [Generating Predictions]{#10}
 
 Let's try testing the model we fit using our test data set. One issue we have to address
 is that, well, our test data hasn't been touched by our PCA step! That's ok, 
@@ -555,7 +540,7 @@ the model.
 predictions <- predict(model1, newdata = PCA_test_data[, 1:3])
 ```
 
-### 11) [[Model Evaluation: Confusion Matrix]{#11}](#0)
+### 11) [Model Evaluation: Confusion Matrix]{#11}
 
 And now create a confusion matrix for us to evaluate our model with.
 
@@ -564,7 +549,7 @@ conf_matrix <- confusionMatrix(data = predictions, reference = as.factor(PCA_tes
 conf_matrix
 ```
 
-### 12) [[Confusion Matrix Discussion]{#12}](#0)
+### 12) [Confusion Matrix Discussion]{#12}
 
 There is a lot to unpack with the output from our confusion matrix. First, let's
 talk about the actual values within the matrix table itself. 
@@ -668,7 +653,7 @@ suspect or pathological, implying that our model was overly cautious. All in all
 I much prefer this result over a model that is too lenient and misclassifies cases as normal
 when the condition of the fetus is actually something doctors should worry about. 
 
-### 13) [[Area Under the Curve (AUC)]{#13}](#0)
+### 13) [Area Under the Curve (AUC)]{#13}
 
 One last model evaluation technique that is useful is to visualize the Reciever
 Operating Curve (ROC) and calculate the area underneath it. 
@@ -747,7 +732,7 @@ This final metric, in combination with the previously discussed metric results,
 indicates that our model is successful enough at performing the task we assigned
 it. 
 
-### 14) [[Final Discussion]{#14}](#0)
+### 14) [Final Discussion]{#14}
 
 And there you have it! We have succesfully fit a multinomial logistic regression
 model to our fetal health data. 

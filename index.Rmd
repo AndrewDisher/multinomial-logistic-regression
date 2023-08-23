@@ -14,6 +14,13 @@ output:
 knitr::opts_chunk$set(echo = TRUE, fig.align = "center")
 ```
 
+```{css, echo=FALSE}
+.list-group-item:hover {
+  background: #2fa4e7;
+  color: #ffffff;
+}
+```
+
 **This document records my exploration of the fetal health data set, available here: 
 [Fetal Health data from Kaggle](https://www.kaggle.com/datasets/andrewmvd/fetal-health-classification). 
 Our modeling goal is to fit a logistic regression model to accurately predict the health 
@@ -23,6 +30,7 @@ of a fetus in the time leading up to child birth.**
 
 1. Practice fitting the multinomial logistic regression model
 2. Practice balancing data sets via over/under-sampling class stratified observations
+3. Applying Principal Component Analysis (PCA) to a set of predictors/features
 3. Use visualizations and computed metrics to assess model fit
 4. Practice using the box package for explicit package and function dependencies (instead of using library() calls)
 
@@ -61,6 +69,7 @@ know which package is providing us with which functions.
 The syntax for this is of the form `box::use(<package1>[<function>], <package2>[<function1>, <function2>, ...])`. 
 If you've never used box before, I highly recommend it. You can learn more on the [box
 package website](https://klmr.me/box/articles/box.html) if you have never used this method. 
+
 ```{r}
 box::use(
   caret[confusionMatrix], 

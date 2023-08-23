@@ -4,6 +4,7 @@ author: "Andrew Disher"
 date: "2023-08-19"
 output: 
   html_document:
+    theme: cerulean
     toc: true
     toc_depth: 3
     toc_float: true
@@ -13,7 +14,10 @@ output:
 knitr::opts_chunk$set(echo = TRUE, fig.align = "center")
 ```
 
-#### This document records my exploration of the fetal health data set, available here: [Fetal Health data from Kaggle](https://www.kaggle.com/datasets/andrewmvd/fetal-health-classification). Our modeling goal is to fit a logistic regression model to accurately predict the health of a fetus in the time leading up to child birth. 
+**This document records my exploration of the fetal health data set, available here: 
+[Fetal Health data from Kaggle](https://www.kaggle.com/datasets/andrewmvd/fetal-health-classification). 
+Our modeling goal is to fit a logistic regression model to accurately predict the health 
+of a fetus in the time leading up to child birth.**
 
 ### Goals of this Project
 
@@ -46,7 +50,17 @@ This will install the required R dependencies, recorded in the file renv.lock, t
 
 After that, you're good to go! 
 
-### 1) Import necessary package functions using `box`
+### 1) Import necessary packages
+
+Instead of using traditional R `library()` calls, we'll use the `box` package. What 
+this package does is essentially the same as `library()`, except that we are
+now able to specify which functions we require in our import statements. This ensures
+we are not importing functions we don't need, and has the added benefit of letting us
+know which package is providing us with which functions. 
+
+The syntax for this is of the form `box::use(<package1>[<function>], <package2>[<function1>, <function2>, ...])`. 
+If you've never used box before, I highly recommend it. You can learn more on the [box
+package website](https://klmr.me/box/articles/box.html) if you have never used this method. 
 ```{r}
 box::use(
   caret[confusionMatrix], 
@@ -462,7 +476,7 @@ PCA_training_data %>%
   head()
 ```
 
-### 9) [Fitting a Multinomial Logistic Regression Model]{#9}
+### 9) [Fitting the Model]{#9}
 
 First, let's create a model using only a constant intercept as a predictor. This will serve as our null/base model.
 We'll use the `multinom()` function from the package `nnet`. 
@@ -588,7 +602,7 @@ There are MANY statistics that can be computed for confusion matrices, and their
 can be quite confusing. However, we'll restrict our focus to only two here: sensitivity
 and specificity. 
 
-**Sensitivity**
+#### _Sensitivity_
 
 First, we'll talk about sensitivity. In this project, I thought it was best to 
 place particular emphasis on obtaining high sensitivity. Sensitivity can be interpreted 
@@ -610,7 +624,7 @@ actually is pathological. Despite a lower sensitivity for Suspect fetuses, it is
 we were able to create a model that correctly informs doctors that the 
 fetus is in poor condition when it really is. 
 
-**Specificity**
+#### _Specificity_
 
 Second, we'll discuss specificity. Specificity is the proportion of true negatives
 divided by the number of true negatives plus false positives. This statistic measures
@@ -627,7 +641,7 @@ Our confusion matrix output yields specificities of about .93, .87, and .94 for 
 Suspect, and Pathological cases, respectively. This is good across the board, so
 we rest can assured that our model produces very few false positives.
 
-**Other Statistics**
+#### _Other Statistics_
 
 Prevalence, detection rate, and detection prevalence are all much less useful for
 our purposes because they are all dependent on how many poistive cases (for each class)

@@ -525,7 +525,7 @@ and the response variable, `fetal_health`, are now obscured.
 Let's try testing the model we fit using our test data set. One issue we have to address
 is that, well, our test data hasn't been touched by our PCA step! That's ok, 
 the R prcomp object, produced by the function `prcomp()` can be used to transform
-our test predictors in the same we we had when we implemented the PCA with the training data. 
+our test predictors in the same way we had when we implemented the PCA with the training data. 
 
 Using a combination of the PCA_data object and the `predict()` function, we can use 
 the rotation matrix from the PCA to do just that. 

@@ -1,0 +1,777 @@
+---
+title: "Fitting a Multinomial Logistic Regression Model to Fetal Health Data"
+author: "Andrew Disher"
+date: "2023-08-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = "center")
+```
+
+#### This document records my exploration of the fetal health data set, available here: [Fetal Health data from Kaggle](https://www.kaggle.com/datasets/andrewmvd/fetal-health-classification). Our modeling goal is to fit a logistic regression model to accurately predict the health of a fetus in the time leading up to child birth. 
+
+### Goals of this Project:
+
+1. Practice fitting the multinomial logistic regression model
+2. Practice balancing data sets via over/under-sampling class stratified observations
+3. Use visualizations and computed metrics to assess model fit
+4. Practice using the box package for explicit package and function dependencies (instead of using library() calls)
+
+### [Organization of this Document:]{#0}
+
+1. [Import necessary package functions using `box`](#1)
+2. [Check the variable structure of the data set](#2)
+3. [Create training and testing data sets](#3)
+4. [Visualizing the data](#4) 
+5. [Notes on `"Outliers"`](#5) 
+6. [Examining potential collinearity in predictors](#6)
+7. [Exploring the response variable: fetal_health](#7)
+8. [Principal Component Analysis](#8)
+9. [Fitting a Multinomial Logistic Regression Model](#9)
+10. [Generating Predictions](#10)
+11. [Model Evaluation: Confusion Matrix](#11)
+12. [Model Evaluation: Confusion Matrix](#12)
+13. [Confusion Matrix Discussion](#13)
+14. [Final Discussion](#14)
+
+#### Traversing this Document:
+
+To quickly travel to a specific numbered section of this document, you can click one of the links 
+above that corresponds to the section you are interested in. To travel back to the 
+table of contents above, click on the section link you are currently visiting. 
+
+I have implemented this functionality because this is a lengthy document, and 
+I wanted to make it as pleasant as possible for the reader (you) to explore my
+work. 
+
+Enjoy!
+
+
+### Some Setup
+
+In case you are downloading this project from GitHub to explore it yourself, note that
+it uses the [renv](https://rstudio.github.io/renv/articles/renv.html) R package. This is
+to manage the dependencies of the project to ensure that all needed packages, the packages
+they depend on, and their correct versions are installed. If you have never used renv
+before, simply follow these steps once you've loaded the project in an R session:
+
+In you R console, run the command `renv::restore(clean = TRUE)`. 
+This will install the required R dependencies, recorded in the file renv.lock, to run the project code. 
+
+After that, you're good to go! 
+
+### 1) [[Import necessary package functions using `box`]{#1}](#0)
+```{r}
+box::use(
+  caret[confusionMatrix], 
+  dplyr[`%>%`, across, arrange, case_when, glimpse, group_by, mutate, n, summarize],
+  ggcorrplot[cor_pmat, ggcorrplot],
+  ggplot2[aes, coord_flip, element_text, geom_bar, geom_boxplot, geom_line, geom_point, 
+          geom_violin, ggplot, labs, scale_fill_viridis_d, scale_x_discrete, theme, 
+          theme_gray, theme_minimal],
+  gt[gt],
+  nnet[multinom],
+  pROC[auc, multiclass.roc, plot.roc],
+  ROSE[ovun.sample],
+  tidyr[pivot_longer]
+  )
+```
+
+### 2) [[Check the variable structure of the data set]{#2}](#0)
+
+First, I would like to know what variables I am dealing with and what are their types. The `glimpse()` function from dplyr is useful for this. 
+```{r}
+Fetal_Health_Data_Set <- read.csv("data/fetal_health.csv")
+glimpse(Fetal_Health_Data_Set)
+```
+
+They are all continuous numeric variables. How nice!
+
+Generally, I like to sort the variables to make my life easier with plotting, etc.
+We'll sort the variables alphabetically. 
+
+```{r}
+Fetal_Health_Data_Set <- Fetal_Health_Data_Set[, sort(colnames(Fetal_Health_Data_Set))]
+```
+
+### 3) [[Create training and testing data sets]{#3}](#0)
+
+Before diving into examining data, and then eventually modeling it, let's create
+two data splits for training and testing data. We'll use an 80-20 split; 80% 
+training data and 20% testing data. 
+
+```{r}
+# Split Data into Training and Testing
+sample_size = floor(0.8*nrow(Fetal_Health_Data_Set))
+set.seed(666)
+
+# Randomly split data
+picked = sample(seq_len(nrow(Fetal_Health_Data_Set)), size = sample_size)
+
+# Store the Training and Testing data in their respective data frames
+training_data <- Fetal_Health_Data_Set[picked, ]
+test_data <- Fetal_Health_Data_Set[-picked, ]
+```
+
+I'd like to create a function to acquire some summary statistics, like mean, median etc., for each of the variables. 
+The built in `summary.data.frame()` function could be used, but it's output is not 
+formatted very well, so we'll use the function below:
+
+```{r}
+custom_summary <- function(data, cols) {
+  data %>% 
+    pivot_longer(cols = all_of(cols), names_to = "Variable", values_to = "Value") %>% 
+    group_by(Variable) %>% 
+    arrange(Variable) %>% 
+    summarize(min = min(Value), 
+              max = max(Value), 
+              median = median(Value), 
+              mean = mean(Value),
+              sd = sd(Value),
+              n = n())
+}
+```
+
+Let's see what our custom summary looks like for our data set. We'll pipe the output 
+to `gt`'s `gt()` function to make it easier on the eyes in this markdown document.
+Note that I'm removing the `fetal_health` variable, since that is our categorical
+variable, which we'll be investigating more in a bit. 
+
+```{r}
+predictor_data <- subset(training_data, select = -c(fetal_health))
+
+columns <- predictor_data %>% 
+  colnames()
+  
+custom_summary(data = training_data, cols = columns) %>% 
+  gt()
+```
+
+It looks like most of our variables are within a positive range of values. This makes 
+sense though, because a lot of them are attributes measured from the histogram displayed 
+from the tool used monitor fetal health (the Cardiotocogram, or CTG). Also, any variables 
+that measure things like `number of peaks`, `number of zeros`, and `histogram variance`
+will inherently have values greater or equal to zero. They will never be negative. 
+
+### 4) [[Visualizing the data]{#4}](#0)
+
+Let's create some boxplots plots to better understand these predictor variables. I'll also 
+rename these variables so the original variable names don't clutter the plot, since they are super long!
+
+```{r}
+# Renaming the predictor variable columns
+colnames(predictor_data) <- sort(c("baseline", 'accel', "fet_mov", "uterine", "light_dec", "sev_dec",
+                                   "prol_dec", "ab_short_var", "mean_short_var", "perc_time_ab_var",
+                                   "mean_long_var", "hist_width", "hist_min", "hist_max", "hist_num_peaks",
+                                   "hist_zeros", "hist_mode", "hist_mean", "hist_med",
+                                   "hist_var", "hist_tend"))
+# Create the boxplots
+predictor_data %>% 
+  pivot_longer(names_to = "Variable", 
+               values_to = "Value",
+               cols = all_of(colnames(predictor_data))) %>%
+  ggplot(aes(x = Variable, y = Value, fill = Variable)) +
+  geom_boxplot() +
+  scale_x_discrete(limits = rev(colnames(predictor_data))) +
+  scale_fill_viridis_d() +
+  labs(title = "Examining the distributions of Predictor Variables",
+       x = "Variables",
+       y = "") +
+  coord_flip() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+The first thing that jumps out is that we have many `"apparent"`
+ outliers, for a number of variables. 
+Secondly, the construction of this chart is not as useful as it could be. Lets 
+standardize each of these variables such that they can be compared on the
+same scale. 
+
+We'll do this by using the `scale()` function from base R, which subtracts
+a variable's mean from each observation and then divides by the variable's standard deviation. 
+This will cause each variable to have a mean of zero and a standard deviation of 1. 
+```{r}
+# Scale each of the predictors
+scaled_predictors <- predictor_data %>%
+  mutate(across(all_of(colnames(predictor_data)), scale))
+
+# Plot scaled predictors 
+scaled_predictors %>% 
+  pivot_longer(names_to = "Variable", 
+               values_to = "Value",
+               cols = all_of(colnames(scaled_predictors))) %>%
+  ggplot(aes(x = Variable, y = Value, fill = Variable)) +
+  geom_boxplot() +
+  scale_x_discrete(limits = rev(colnames(scaled_predictors))) +
+  scale_fill_viridis_d() +
+  labs(title = "Examining the distributions of Scaled Predictor Variables",
+       x = "Variables",
+       y = "") +
+  coord_flip() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+Nice! We can see each of the variables on the same scale now. Like before, we see many outliers, 
+however now we can see the general number of outliers for variables with much smaller scales,
+like `accelerations` and `fetal_movement`.
+
+### 5) [[Notes on `"Outliers"`]{#5}](#0) 
+
+It's easy to create some boxplots and determine that we have many outliers when 
+many data points lay outside the bounds set by our classic 1.5*Interquartile Range (IQR)
+rule. However, this would be a mistake. There is no reason to believe these are genuine 
+outliers. As far as we know, there were no measurement failures or something
+similar. The data set description on Kaggle gives no disclaimer about this detail.
+
+Additionally, the IQR rule mentioned above is derived from the assumption that our 
+distribution is a normal distribution, and is why the rule is a symmetric rule. 
+The value 1.5 was chosen as a good boundary value to identify _potentional_ outliers
+from this common distribution, but it doesn't really apply for other distributions, which 
+our predictor variables definitely belong to. If we made a violin plot for each of them,
+this would be much clearer. However, this is not done here because the shapes of 
+these distributions take up a lot of space and it would be difficult to display them 
+concisely, like we did with the boxplots. 
+
+Therefore, we must conclude that these extreme data points are simply natural occurences 
+in the data. They are part of the naturally formed distribution. These distributions
+for the predictor variables are certainly non-normal, but that's completely ok. 
+They don't have to be for our model!
+
+All we care about is the multinomial distribution of the response variable, 
+fetal_health. We'll talk about that more soon.
+
+### 6) [[Examining potential collinearity in predictors]{#6}](#0)
+
+Another common practice is to check if any of our predictors are correlated with each other. 
+If they are, the estimates for our predictor coefficients might be inaccurate. To check this,
+let's create a correlation matrix. We'll display only the lower half, since the matrix
+is by definition symmetric. 
+
+```{r, fig.height = 10, fig.width = 10}
+ggcorrplot(corr = cor(predictor_data), 
+           type = "lower",
+           show.diag = TRUE,
+           outline.col = "black",
+           ggtheme = theme_gray,
+           colors = c("#6D9EC1", "white", "#E46726"),
+           p.mat = cor_pmat(predictor_data),
+           tl.cex = 10,
+           title = "Correlation Matrix and Correlation Test p-values")
+```
+
+Oof! It seems like some variables tend to be highly correlated with others, especially 
+the ones pertaining to the histogram coming from the cardiotocograms. The matrix above 
+shows the correlations between the variables and displays an `X` over insignificant 
+correlation cells. Significance was calculated using a correlation test with the 
+function argument `p.mat`.  
+
+Let's also display the correlations themselves, just for completeness. 
+
+```{r, fig.height = 10, fig.width = 10}
+ggcorrplot(corr = cor(predictor_data), 
+           type = "lower",
+           show.diag = TRUE,
+           outline.col = "black",
+           ggtheme = theme_gray,
+           colors = c("#6D9EC1", "white", "#E46726"),
+           lab = TRUE,
+           digits = 1,
+           lab_size = 3,
+           show.legend = TRUE,
+           tl.cex = 10, 
+           title = "Correlation Matrix with Correlation Labels")
+```
+
+It seems like a dimensionality reduction technique may be necessary. However, there are
+tradeoffs with these techniques. Applying Principal Component Analysis (PCA) or something similar would erase any 
+interpretation of coefficient estimates that we get from the final model. On the other 
+hand, if we don't apply one of these dimensionality reduction techniques, our model may
+not produce accurate coefficient estimates anyways. 
+
+It may be worth implementing PCA, but first we'll have to address our imbalanced classes.
+Let's do that now!
+
+### 7) [[Exploring the response variable: fetal_health]{#7}](#0)
+
+fetal_health is a categorical variable with three levels:
+
+  1. Normal
+  2. Suspect (potential health complications)
+  3. Pathological (multiple signs point to definite health complications)
+
+A natural first step is to examine the distribution of these classifications in
+the data. To do this, we create a table of proportions using the training_data. 
+
+```{r}
+prop.table(table(training_data$fetal_health))
+```
+
+Wow! Now that is some imbalanced data. Class imbalance is a big issue that appears 
+in many classification data sets. It's something that occurs naturally, especially 
+when we are trying to classify rare events. Most fetal development goes smoothly, 
+thanks to modern medicine and widely available health care. But, there will always 
+be cases for concern, which is exactly what we aim to classify accurately in this
+project. 
+
+To create an unbiased model, we have to correct for this class imbalance. There are
+multiple ways to address this issue:
+
+- Undersample the commonly occurring class/level (Normal, in our case)
+- Oversample the rare class (Suspect and Pathological)
+- or a combination of both.
+
+In this project, I chose to use a combination of both using a great package called 
+`ROSE`, which provides the function `ovun.sample()`.
+
+There is also the added complexity of having a categorical response variable with
+more than two classes. This makes our over-under sampling methodology more complex
+too. 
+
+Since we have three classes, we'll create 2 subsets for our data: 
+
+- Subset containing observations belonging to classes 1 and 2 and
+- Subset containing observations belonging to classes 1 and 3.
+
+```{r}
+subset12 <- base::subset(training_data, fetal_health == 1 | fetal_health == 2)
+
+subset13 <- base::subset(training_data, fetal_health == 1 | fetal_health == 3)
+```
+
+Now, it is possible to undersample from class 1 in both cases and oversample from
+classes 2 and 3 in their respective subsets. Class 1 is shared because it is the 
+most populous class. 
+
+#### Balancing Subset 1
+
+```{r}
+training_data12 <- ovun.sample(fetal_health~., data=subset12, method = "both",
+                             p = 0.47, # Probability of resampling from the rare class (has heart disease)
+                             seed = 666,
+                             N = nrow(subset12))$data
+```
+
+#### Balancing Subset 2
+
+```{r}
+training_data13 <- ovun.sample(fetal_health~., data=subset13, method = "both",
+                               p = 0.47, # Probability of resampling from the rare class (has heart disease)
+                               seed = 666,
+                               N = nrow(subset13))$data
+```
+
+We chose .47 as our probablity to sample from the rare class in both cases. It's a little
+more conservative to do it this way, instead of choosing a 50-50 split. This was just my preference. 
+
+Let's check the distribution of the response variable again, for both subsets. 
+
+```{r}
+prop.table(table(training_data12$fetal_health))
+prop.table(table(training_data13$fetal_health))
+```
+
+Ok, very nice. We have now udnersampled from the observations belonging to class 1, 
+and oversampled from classes 2 and 3. Our data is looking more balanced. 
+
+Now, we must obtain the union of these two sets, which also requires us to ensure that 
+we **don't** include the data from class 1 twice. 
+
+```{r}
+training_data_balanced <- rbind(training_data12[training_data12$fetal_health == 2,], training_data13)
+
+prop.table(table(training_data_balanced$fetal_health))
+```
+
+And there we go. Each class is represented by about a third of the observations within our training 
+data set. Our imbalanced class issue has been rectified. Let's move on to our PCA. 
+
+
+### 8) [[Principal Component Analysis]{#8}](#0)
+
+Let's now use the `stats` function `prcomp()` to produce principal components for
+the predictor variables in our data set. 
+
+```{r}
+predictor_data <- subset(training_data_balanced, select = -c(fetal_health))
+
+# Remember to standardize the predictors. Neglecting this will skew the results of the PCA.
+PCA_data <- prcomp(predictor_data, center = TRUE, scale. = TRUE)
+
+summary(PCA_data)
+```
+
+The principal components are listed above in order of importance. This order of importance 
+is ranked according to how much of the total variation within the data each component 
+can explain. We also see the cumulative variance proportion as we include more components.
+Often, it is not necessary to include more components after a threshold of 80% 
+variance explained, in my experience. 
+
+We can also make a graph called a scree plot to apply the 'elbow method' to choose 
+how many components to include in our model. 
+
+```{r}
+# Data frame for plotting
+pca_plotting <- data.frame(var_explained = PCA_data$sdev^2 / sum(PCA_data$sdev^2), 
+                           pc_names = (colnames(PCA_data$x)))
+
+# Create the scree plot
+ggplot(data = pca_plotting) +
+  geom_bar(aes(x = reorder(pc_names, -var_explained), y = var_explained), 
+           stat = "identity", fill = "steel blue") +
+  geom_line(aes(x = reorder(pc_names, -var_explained), y = var_explained, group = 1), 
+            color = "orange", linewidth = 1) +
+  geom_point(aes(x = reorder(pc_names, -var_explained), y = var_explained), 
+             color = "black") + 
+  labs(title = "Scree Plot for Principal Components", 
+       y = "Proportion of Variance Explained", 
+       x = "Component") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust=1))
+```
+
+We can see from this plot that the first principal component (by design) explains by 
+far the most variance in the predictor data. The variance explained by other components 
+continues to decrease, meaning that beyond a certain point, there is no reason to include 
+any more of them. Using the elbow method, it is clear that including the first three 
+components is enough, and any more yield diminshing returns. 
+
+The variance explained by the first three components is:
+
+```{r}
+pca_plotting$var_explained[1:3] %>% 
+  sum()
+```
+
+About 60%. That's less than I would like, but let's trust in the elbow method. We'll
+use only the first three components in our model. 
+
+Now, let's reassign our class labels to the principal component data we wish to use.
+
+```{r}
+# Bind the data
+PCA_training_data <- cbind(PCA_data$x[, 1:3], training_data_balanced$fetal_health) %>% 
+  as.data.frame()
+
+# Change the name of the fourth variable
+colnames(PCA_training_data)[4] <- "fetal_health"
+```
+
+Lastly, let's replace the 1's, 2's, and 3's in the `fetal_health` column with their
+respective names and convert to a factor. Multinom expects a factor, and it would be nice
+to see the class names when we get our model ouput. 
+
+```{r}
+# Convert values for fetal_health
+PCA_training_data$fetal_health <- case_when(PCA_training_data$fetal_health == 1 ~ "Normal",
+                                            PCA_training_data$fetal_health == 2 ~ "Suspect", 
+                                            PCA_training_data$fetal_health == 3 ~ "Pathological")
+
+# multinom requires to response to be of class factor, so we'll quickly convert fetal_health
+PCA_training_data$fetal_health <- as.factor(PCA_training_data$fetal_health)
+
+# Display a data preview
+PCA_training_data %>% 
+  head()
+```
+
+### 9) [[Fitting a Multinomial Logistic Regression Model]{#9}](#0)
+
+First, let's create a model using only a constant intercept as a predictor. This will serve as our null/base model.
+We'll use the `multinom()` function from the package `nnet`. 
+
+```{r}
+model_null <- multinom(fetal_health ~ 1, data = PCA_training_data, model = TRUE)
+summary(model_null)
+```
+
+Now, let's create a preliminary model for the training data, using the principal
+components as predictors. 
+
+```{r}
+model1 <- multinom(fetal_health ~., data = PCA_training_data, model = TRUE)
+summary(model1)
+```
+
+We can see that the residual deviance for the null model is more than double
+that of the model using the principal components as predictors as well. This tells 
+us that including them improves our model substantially. The AIC also greatly
+improves. 
+
+Let's run an ANOVA to compare the two even more. 
+
+```{r}
+anova(model_null, model1)
+```
+
+The chi-squared statistic of 2566 and it's corresponding p-value of near-zero are 
+evidence that the model improves dramatically over the null model, and that the 
+principal components together are significant within the model. Unfortunately, we cannot interpret 
+this much further, since PCA was used and the relationships between the original variables
+and the response variable, `fetal_health`, are now obscured. 
+
+### 10) [[Generating Predictions]{#10}](#0)
+
+Let's try testing the model we fit using our test data set. One issue we have to address
+is that, well, our test data hasn't been touched by our PCA step! That's ok, 
+the R prcomp object, produced by the function `prcomp()` can be used to transform
+our test predictors in the same we we had when we implemented the PCA with the training data. 
+
+Using a combination of the PCA_data object and the `predict()` function, we can use 
+the rotation matrix from the PCA to do just that. 
+
+```{r}
+PCA_test_data <- predict(PCA_data, newdata = subset(test_data, select = -c(fetal_health)))
+```
+
+Select the first 3 principal components, like before, and bind them to the test data 
+response values. 
+
+```{r}
+PCA_test_data <- cbind(PCA_test_data[, 1:3], test_data$fetal_health) %>% 
+  as.data.frame()
+
+colnames(PCA_test_data)[4] <- "fetal_health"
+
+PCA_test_data$fetal_health <- case_when(PCA_test_data$fetal_health == 1 ~ "Normal",
+                                        PCA_test_data$fetal_health == 2 ~ "Suspect", 
+                                        PCA_test_data$fetal_health == 3 ~ "Pathological")
+```
+
+And examine our new test data frame. 
+
+```{r}
+PCA_test_data %>% 
+    head()
+```
+
+
+Ok! Now that our test data is ready, let's calcualte some actual predictions using
+the model. 
+
+```{r}
+predictions <- predict(model1, newdata = PCA_test_data[, 1:3])
+```
+
+### 11) [[Model Evaluation: Confusion Matrix]{#11}](#0)
+
+And now create a confusion matrix for us to evaluate our model with.
+
+```{r}
+conf_matrix <- confusionMatrix(data = predictions, reference = as.factor(PCA_test_data$fetal_health))
+conf_matrix
+```
+
+### 12) [[Confusion Matrix Discussion]{#12}](#0)
+
+There is a lot to unpack with the output from our confusion matrix. First, let's
+talk about the actual values within the matrix table itself. 
+
+#### _Overall Accuracy_
+
+The `reference` columns displayed are the actual labels, and `prediction` column
+is our model's predictions. Each of the diagonal cells, starting from top left and going 
+to bottom right, represent the number from each class we classified correctly. So, we correctly 
+classified 270/329 normal fetuses, 34/38 pathological, and 47/59 suspect. Overall, we correctly 
+classified 351 out of 426 observations, which results in an accuracy of about 82.39%.
+
+This corresponds to what is shown as the accuracy metric displayed in the output below
+`Overall Statistics`. Not too bad! Could be better, but I'll explain why this is actually
+quite good in a moment. 
+
+#### _No Information Rate_
+
+Below the reported accuracy, we get a value called No Information Rate. This is simply 
+the accuracy a model would have achieved if it predicted the most populous class every time, 
+which happens to be Normal by far in the test data set. Therefore, our model achieved an
+accuracy greater than the naive model by about five percentage points. 
+
+Underneath the No Information Rate (NIR), we see a hypothesis test performed. This test
+uses a null hypothesis of "Accuracy of Model = NIR", and the alternative is listed in
+brackets after. This can be read as "Model Accuracy > NIR". If we get a significant p-value, 
+then the test rejects the null and concludes the model accuracy is greater than 
+accuracy of a naive model, always predicting the most populous class. Our reported p-value
+is about .005, which is lower than the common threshold of .05, so we can safely conclude 
+that our model is more accuracte than a naive model! Our work was not in vain!
+
+#### _Statistics by Class_
+
+Now, something more useful than looking at overall accuracy is to examine certain statistics by class. 
+There are MANY statistics that can be computed for confusion matrices, and their interpretations
+can be quite confusing. However, we'll restrict our focus to only two here: sensitivity
+and specificity. 
+
+**Sensitivity**
+
+First, we'll talk about sensitivity. In this project, I thought it was best to 
+place particular emphasis on obtaining high sensitivity. Sensitivity can be interpreted 
+as the proportion of positive cases that our model is able to detect. In our context, 
+a high sensitivity for any one class means that we are able to correctly classify 
+most of the observations that actually belong to that class. 
+
+For example, a sensitivity of 100% for the pathological class means that we were able
+to correctly classify actual, pathological cases as pathological, and our model 
+produced zero false-negatives for that class. In many healthcare settings where
+a model is trying to classify potentially lethal diseases or conditions, sensitivity 
+is often one of the most important metrics. We'll adopt that policy for our fetal health data. 
+
+Our model yielded a sensitivity of .8207 for the Normal class, .7966 for Suspect, 
+and .8947 for Pathological. While the sensitivity for Suspect is lower than I would 
+prefer, the sensitivity for Pathological is a high 89%! In other words, our model 
+correctly identifies fetuses as pathological 89% of the time when their condition
+actually is pathological. Despite a lower sensitivity for Suspect fetuses, it is good that 
+we were able to create a model that correctly informs doctors that the 
+fetus is in poor condition when it really is. 
+
+**Specificity**
+
+Second, we'll discuss specificity. Specificity is the proportion of true negatives
+divided by the number of true negatives plus false positives. This statistic measures
+the ability of our model to correctly inform doctors whether a fetus does not belong 
+to a certain class. This is the interpretation for a 2x2 confusion matrix, however
+ours is 3x3. 
+
+Therefore, we can think of true negatives as being the number of (for example)
+cases where our model said "you" were NOT normal (i.e. you ARE suspect or pathological),
+when you truly weren't normal. So specificity tells us the model's ability to correctly 
+say an observation does NOT belong to a single class. 
+
+Our confusion matrix output yields specificities of about .93, .87, and .94 for Normal, 
+Suspect, and Pathological cases, respectively. This is good across the board, so
+we rest can assured that our model produces very few false positives.
+
+**Other Statistics**
+
+Prevalence, detection rate, and detection prevalence are all much less useful for
+our purposes because they are all dependent on how many poistive cases (for each class)
+are actually in our testing data. The testing data was picked randomly, so these metrics
+aren't very informative. 
+
+Positive and negative predicted value are useful, but we'll choose not to focus 
+on them here. 
+
+Balanced accuracy is useful when there is class imbalance in the 
+TEST data, rather than the training data. We already balanced the training data, 
+but never did so for the test data, which was intentional. You never want to artificially
+balance your test data. Because of this, balanced accuracy can tell us how accurate the
+model is with respect to a certain class, and is proportional to the sensitivity divided 
+by the specificty, for that class. High values are good, and that's exactly what we
+get with our model. 
+
+#### _Confusion Matrix Takeaways_
+
+Overall, the performance of our model was quite good, despite an 82% overall accuracy. 
+This low overall accuracy was mainly due to the model misclassifying Normal cases as
+suspect or pathological, implying that our model was overly cautious. All in all, 
+I much prefer this result over a model that is too lenient and misclassifies cases as normal
+when the condition of the fetus is actually something doctors should worry about. 
+
+### 13) [[Area Under the Curve (AUC)]{#13}](#0)
+
+One last model evaluation technique that is useful is to visualize the Reciever
+Operating Curve (ROC) and calculate the area underneath it. 
+
+To do this, we use the functions `multiclass.roc()`, `auc()`, and `plot.roc()`, all from
+the package `pROC`.
+
+Let's compute the necessary information for plotting using the `multiclass.roc()`
+function. 
+
+```{r}
+roc_score = multiclass.roc(PCA_test_data$fetal_health, 
+                           predict(model1, subset(PCA_test_data, 
+                                                  select = -c(fetal_health)), 
+                                   type = 'prob'))
+```
+
+Now, extract the ROC curves graphing information and store it.
+
+```{r}
+rs <- roc_score[['rocs']]
+```
+
+Compute the areas under each of the curves (we'll have multiple, since this is multiclass classification).
+
+```{r}
+AUC1 <- auc(rs[[1]][[2]])
+AUC2 <- auc(rs[[2]][[2]])
+AUC3 <- auc(rs[[3]][[2]])
+```
+
+Finally, let's plot the curves that we just extracted, and display their corresponding
+AUC values. 
+
+```{r}
+# Plot each of the curves, overlayed with one another
+plot.roc(rs[[1]][[2]], col = 'blue', legacy.axes = TRUE,
+         main = "Multiclass ROC Curve -- Logistic Regression -- Fetal Health")
+plot.roc(rs[[2]][[2]], col = 'red', add = TRUE)
+plot.roc(rs[[3]][[2]], col = 'green', add = TRUE)
+
+# Add legends for clarity
+legend(x = "right",          # Position
+       legend = c("Normal~Pathological", 
+                  "Normal~Suspect", 
+                  "Pathological~Suspect"),  # Legend texts
+       lty = c(1, 1, 1),           # Line types
+       col = c('blue', 'red', 'green'),           # Line colors
+       lwd = 2) 
+
+legend(x = "bottomright",          # Position
+       legend = c(paste("AUC =", round(AUC1, 3)), 
+                  paste("AUC =", round(AUC2, 3)), 
+                  paste("AUC =", round(AUC3, 3))),  # Legend texts
+       lty = c(1, 1, 1),           # Line types
+       col = c('blue', 'red', 'green'),           # Line colors
+       lwd = 2, 
+       horiz = TRUE)
+```
+
+Beautiful! What a nice plot, despite being created with base R graphics. Now, on to the 
+interpretation. The 45 degree diagonal line represents the curve that would occur
+if our model was a naive classifier. In other words, if our model made its predictions
+randomly. The other three lines are more interesting. Each one represents the ability of
+our model to distinguish between any given pair of classes. Since we have three classes, 
+we'll have three different pairings, thus three lines. The closer the lines are to 
+reaching the top left corner of the plot, the better. 
+
+In general, it's easier to summarize the performance of a model by calculating the 
+area under the curve for each of the curves. These are shown in the bottom right
+legend, and the closer each value is to 1, the better. Our scores are all above 
+.9, which indicates our model does a much better job at distinguishing between 
+the classes in each pair than a naive, random model would.
+
+This final metric, in combination with the previously discussed metric results,
+indicates that our model is successful enough at performing the task we assigned
+it. 
+
+### 14) [[Final Discussion]{#14}](#0)
+
+And there you have it! We have succesfully fit a multinomial logistic regression
+model to our fetal health data. 
+
+In summary we have:
+
+- applied good modeling practices by creating a train-test data split,
+- performed some exploratory data analysis,
+- used a combination of under- and over-sampling to balance our response classes,
+- addressed collinearity of our predictors via PCA,
+- fit and evaluated a multinomial logistic regression model, 
+- and discussed the successes and shortcomings of our model. 
+
+I would like to see if my model would perform better without the PCA we applied, 
+since I was unsure if it was completely necessary. There was some multicollinearity 
+between the predictor variables, but maybe not enough to merit PCA. 
+
+Instead of PCA, I could have performed hypothesis tests to tell which of my predictors were significant 
+in the model, and sequentially remove (backward selection) or add (forward selection)
+predictors. This also would have afforded the opportunity to interpret the model's
+coefficient estimates, since their original meaning would not have been obscured
+by the dimensionality reduction.  
+
+**If you have any recommendations on how to improve this work, questions, or other
+comments, please let me know!**
+
+**Thanks for reading!**

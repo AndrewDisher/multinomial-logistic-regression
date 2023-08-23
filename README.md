@@ -3,7 +3,7 @@ This is a repository for my statistical modelling endeavor to fit a multinomial 
 the fetal health data set, available on Kaggle here: [Fetal Health Classification](https://www.kaggle.com/datasets/andrewmvd/fetal-health-classification). 
 You can also find the data within the data folder of this repository.
 
-# Viewing the Notebook
+## Viewing the Notebook
 There are two options:
 
 1. Download this repository and knit the R Markdown document locally
